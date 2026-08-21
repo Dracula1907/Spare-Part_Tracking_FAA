@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // Default company LAN server fallback
-const DEFAULT_HOST = 'http://192.168.9.200:8080/api/v1';
+const DEFAULT_HOST = 'http://192.168.100.8:8000/api/v1';
 const ENV_API_URL = process.env.EXPO_PUBLIC_API_URL || DEFAULT_HOST;
 
 let currentBaseUrl = ENV_API_URL;

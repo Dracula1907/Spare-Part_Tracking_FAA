@@ -179,7 +179,7 @@ function App() {
   const [token, setToken] = useState(null);
   const [user, setUser] = useState(null);
   const [userRole, setUserRole] = useState('');
-  const [serverHost, setServerHost] = useState('192.168.9.200:8080');
+  const [serverHost, setServerHost] = useState('192.168.100.8:8000');
   const [email, setEmail] = useState('admin@sparetrack.internal');
   const [password, setPassword] = useState('password123');
 

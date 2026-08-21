@@ -11,7 +11,7 @@ return new class extends Migration
         Schema::create('assembly_records', function (Blueprint $table) {
             $table->id();
             $table->foreignId('bom_item_id')->constrained('bom_items')->cascadeOnDelete();
-            $table->foreignId('paint_record_id')->constrained('paint_records')->cascadeOnDelete();
+            $table->foreignId('paint_record_id')->nullable()->constrained('paint_records')->cascadeOnDelete();
             $table->enum('side', ['RH', 'LH', 'COMMON'])->index();
             $table->integer('quantity');
             $table->foreignId('assembled_by')->nullable()->constrained('users')->nullOnDelete();

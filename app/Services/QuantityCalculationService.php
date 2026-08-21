@@ -187,7 +187,7 @@ class QuantityCalculationService
                 $qcRew = (int) $qcForSide->sum('rework_quantity');
 
                 // Rework stats for this side
-                $rewComp = (int) $reworkForSide->where('status', 'completed')->sum('quantity');
+                $rewComp = (int) $reworkForSide->whereIn('status', ['completed', 'returned_to_qc'])->sum('quantity');
                 $rewActive = max(0, $qcRew - $rewComp);
 
                 // Paint stats for this side - include both completed and assembled so Paint never re-acquires assembled parts

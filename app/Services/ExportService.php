@@ -1225,7 +1225,7 @@ class ExportService
                 $key = $col['key'];
                 $val = $item[$key] ?? '—';
 
-                if (in_array($key, ['part_number', 'part_no', 'item_no', 'project', 'jig_unit', 'code', 'date', 'time', 'status'])) {
+                if (in_array($key, ['part_number', 'part_no', 'item_no', 'project', 'jig_unit', 'code', 'date', 'time', 'status', 'supplier', 'source', 'process_type', 'reason'])) {
                     $sheet->setCellValueExplicit("{$letter}{$rowIdx}", (string) $val, DataType::TYPE_STRING);
                 } else {
                     $sheet->setCellValue("{$letter}{$rowIdx}", $val);

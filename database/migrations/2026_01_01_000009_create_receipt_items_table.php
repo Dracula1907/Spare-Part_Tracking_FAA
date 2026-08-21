@@ -24,7 +24,10 @@ return new class extends Migration
                 'qc_inspected',
                 'paint_completed',
                 'assembly_completed',
-                'reverted'
+                'reverted',
+                'scrapped',
+                'returned_to_store',
+                'returned_to_vendor'
             ])->default('received')->index();
             $table->text('remarks')->nullable();
             $table->timestamps();

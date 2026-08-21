@@ -176,7 +176,7 @@ class DashboardController extends Controller
         $todayThroughput = [
             'store_received' => (int) ReceiptItem::where('created_at', '>=', $todayStart)->sum('received_quantity'),
             'qc_approved' => (int) QcInspection::where('inspection_date', '>=', $todayStart)->sum('approved_quantity'),
-            'rework_completed' => (int) ReworkRecord::where('updated_at', '>=', $todayStart)->where('status', 'completed')->sum('quantity'),
+            'rework_completed' => (int) ReworkRecord::where('updated_at', '>=', $todayStart)->whereIn('status', ['completed', 'returned_to_qc'])->sum('quantity'),
             'paint_completed' => (int) PaintRecord::where('created_at', '>=', $todayStart)->where('status', 'completed')->sum('quantity'),
             'assembly_completed' => (int) AssemblyRecord::where('created_at', '>=', $todayStart)->where('status', 'completed')->sum('quantity'),
         ];
@@ -348,6 +348,12 @@ class DashboardController extends Controller
 
             case 'total_parts':
                 $title = 'Total Required BOM Parts';
+                $receiptsGrouped = ReceiptItem::query()
+                    ->whereIn('status', QuantityCalculationService::VALID_RECEIPT_STATUSES)
+                    ->whereHas('bomItem', fn($q) => $q->whereIn('project_id', $activeProjectIds))
+                    ->get()
+                    ->groupBy('bom_item_id');
+
                 $bomQuery = BomItem::query()
                     ->with(['project', 'supplier', 'requirements'])
                     ->whereIn('project_id', $activeProjectIds)
@@ -372,13 +378,15 @@ class DashboardController extends Controller
                     $projCode = $b->project?->project_code ?? ($b->project?->name ?? '—');
                     $jigUnit = ($jig ? $jig : '') . ($unitNo ? ' / ' . $unitNo : '');
                     $supplierName = $b->supplier?->name ?? $b->supplier_name_raw ?? '—';
+                    $itemReceipts = $receiptsGrouped->get($b->id, collect());
 
                     if ($b->requirements->isNotEmpty()) {
                         foreach ($b->requirements as $req) {
                             $side = $req->side ?: 'COMMON';
                             $reqQty = (int) $req->required_quantity;
-                            $recQty = (int) $req->received_quantity;
-                            $pendQty = (int) ($req->pending_quantity > 0 ? $req->pending_quantity : max(0, $reqQty - $recQty));
+                            $rawRec = (int) $itemReceipts->where('side', $side)->sum('received_quantity');
+                            $recQty = min($rawRec, $reqQty);
+                            $pendQty = max(0, $reqQty - $recQty);
                             $partNumber = trim($jig) . trim($unitNo) . trim($partNo) . trim($side);
 
                             $totalQuantity += $reqQty;
@@ -400,8 +408,9 @@ class DashboardController extends Controller
                     } else {
                         $side = $b->side ?: 'COMMON';
                         $reqQty = (int) ($b->total_required ?? 0);
-                        $recQty = (int) ($b->total_received ?? 0);
-                        $pendQty = (int) ($b->total_pending ?? max(0, $reqQty - $recQty));
+                        $rawRec = (int) $itemReceipts->where('side', $side)->sum('received_quantity');
+                        $recQty = min($rawRec, $reqQty);
+                        $pendQty = max(0, $reqQty - $recQty);
                         $partNumber = trim($jig) . trim($unitNo) . trim($partNo) . trim($side);
 
                         $totalQuantity += $reqQty;
@@ -469,6 +478,12 @@ class DashboardController extends Controller
 
             case 'parts_pending':
                 $title = 'Parts Pending Intake';
+                $receiptsGrouped = ReceiptItem::query()
+                    ->whereIn('status', QuantityCalculationService::VALID_RECEIPT_STATUSES)
+                    ->whereHas('bomItem', fn($q) => $q->whereIn('project_id', $activeProjectIds))
+                    ->get()
+                    ->groupBy('bom_item_id');
+
                 $bomQuery = BomItem::query()
                     ->with(['project', 'supplier', 'requirements'])
                     ->whereIn('project_id', $activeProjectIds)
@@ -493,13 +508,15 @@ class DashboardController extends Controller
                     $projCode = $b->project?->project_code ?? ($b->project?->name ?? '—');
                     $jigUnit = ($jig ? $jig : '') . ($unitNo ? ' / ' . $unitNo : '');
                     $supplierName = $b->supplier?->name ?? $b->supplier_name_raw ?? '—';
+                    $itemReceipts = $receiptsGrouped->get($b->id, collect());
 
                     if ($b->requirements->isNotEmpty()) {
                         foreach ($b->requirements as $req) {
                             $side = $req->side ?: 'COMMON';
                             $reqQty = (int) $req->required_quantity;
-                            $recQty = (int) $req->received_quantity;
-                            $pendQty = (int) ($req->pending_quantity > 0 ? $req->pending_quantity : max(0, $reqQty - $recQty));
+                            $rawRec = (int) $itemReceipts->where('side', $side)->sum('received_quantity');
+                            $recQty = min($rawRec, $reqQty);
+                            $pendQty = max(0, $reqQty - $recQty);
                             $partNumber = trim($jig) . trim($unitNo) . trim($partNo) . trim($side);
 
                             if ($pendQty > 0) {
@@ -523,8 +540,9 @@ class DashboardController extends Controller
                     } else {
                         $side = $b->side ?: 'COMMON';
                         $reqQty = (int) ($b->total_required ?? 0);
-                        $recQty = (int) ($b->total_received ?? 0);
-                        $pendQty = (int) ($b->total_pending ?? max(0, $reqQty - $recQty));
+                        $rawRec = (int) $itemReceipts->where('side', $side)->sum('received_quantity');
+                        $recQty = min($rawRec, $reqQty);
+                        $pendQty = max(0, $reqQty - $recQty);
                         $partNumber = trim($jig) . trim($unitNo) . trim($partNo) . trim($side);
 
                         if ($pendQty > 0) {
@@ -682,11 +700,6 @@ class DashboardController extends Controller
 
             case 'paint':
                 $title = 'Parts in Paint Shop Queue';
-                $paintQuery = PaintRecord::query()
-                    ->with(['bomItem.project', 'bomItem.supplier'])
-                    ->whereIn('status', ['pending', 'in_progress', 'ready'])
-                    ->whereHas('bomItem', fn($q) => $q->whereIn('project_id', $activeProjectIds))
-                    ->orderByDesc('created_at');
                 $columns = [
                     ['label' => 'Part Number', 'key' => 'part_number'],
                     ['label' => 'Part No', 'key' => 'part_no'],
@@ -695,11 +708,59 @@ class DashboardController extends Controller
                     ['label' => 'JIG / Unit', 'key' => 'jig_unit'],
                     ['label' => 'Side', 'key' => 'side', 'align' => 'center'],
                     ['label' => 'Paint Qty', 'key' => 'quantity', 'align' => 'center'],
-                    ['label' => 'Process Type', 'key' => 'process_type'],
+                    ['label' => 'Supplier', 'key' => 'supplier'],
+                    ['label' => 'Process Type / Notes', 'key' => 'process_type'],
                     ['label' => 'Status', 'key' => 'status', 'align' => 'center'],
                     ['label' => 'Date', 'key' => 'date', 'align' => 'center'],
                 ];
-                foreach ($paintQuery->get() as $pt) {
+
+                // 1. QC Approved inspections waiting for painting
+                $qcPaintQuery = QcInspection::query()
+                    ->with(['bomItem.project', 'bomItem.supplier'])
+                    ->where('approved_quantity', '>', 0)
+                    ->where(function ($q) {
+                        $q->where('destination', 'PAINT')->orWhereNull('destination');
+                    })
+                    ->whereRaw('(approved_quantity - (SELECT COALESCE(SUM(quantity), 0) FROM paint_records WHERE paint_records.qc_inspection_id = qc_inspections.id)) > 0')
+                    ->whereHas('bomItem', fn($q) => $q->whereIn('project_id', $activeProjectIds))
+                    ->orderByDesc('created_at');
+
+                foreach ($qcPaintQuery->get() as $qc) {
+                    $paintedQty = (int) PaintRecord::where('qc_inspection_id', $qc->id)->sum('quantity');
+                    $availQty = max(0, (int)$qc->approved_quantity - $paintedQty);
+                    if ($availQty > 0) {
+                        $jig = $qc->bomItem?->jig_no ?? '';
+                        $unitNo = $qc->bomItem?->unit_no ?? '';
+                        $partNo = $qc->bomItem?->standard_part_no ?? '';
+                        $side = $qc->side ?? 'COMMON';
+                        $partNumber = trim($jig) . trim($unitNo) . trim($partNo) . trim($side);
+
+                        $totalQuantity += $availQty;
+                        $items[] = [
+                            'id' => 'qc_' . $qc->id,
+                            'part_number' => $partNumber,
+                            'part_no' => $partNo ?: '—',
+                            'item_no' => $qc->bomItem?->item_no ?? '—',
+                            'project' => $qc->bomItem?->project?->project_code ?? ($qc->bomItem?->project?->name ?? '—'),
+                            'jig_unit' => ($jig ? $jig : '') . ($unitNo ? ' / ' . $unitNo : ''),
+                            'side' => $side,
+                            'quantity' => $availQty,
+                            'supplier' => $qc->bomItem?->supplier?->name ?? $qc->bomItem?->supplier_name_raw ?? '—',
+                            'process_type' => 'QC Approved (Awaiting Paint)',
+                            'status' => 'PAINT QUEUE',
+                            'date' => $qc->created_at?->format('d-M-Y H:i') ?? '—',
+                        ];
+                    }
+                }
+
+                // 2. Active Paint records (pending / in_progress / ready)
+                $paintActiveQuery = PaintRecord::query()
+                    ->with(['bomItem.project', 'bomItem.supplier'])
+                    ->whereIn('status', ['pending', 'in_progress', 'ready'])
+                    ->whereHas('bomItem', fn($q) => $q->whereIn('project_id', $activeProjectIds))
+                    ->orderByDesc('created_at');
+
+                foreach ($paintActiveQuery->get() as $pt) {
                     $qty = (int) ($pt->quantity ?? 0);
                     $jig = $pt->bomItem?->jig_no ?? '';
                     $unitNo = $pt->bomItem?->unit_no ?? '';
@@ -709,7 +770,7 @@ class DashboardController extends Controller
 
                     $totalQuantity += $qty;
                     $items[] = [
-                        'id' => $pt->id,
+                        'id' => 'paint_' . $pt->id,
                         'part_number' => $partNumber,
                         'part_no' => $partNo ?: '—',
                         'item_no' => $pt->bomItem?->item_no ?? '—',
@@ -717,6 +778,7 @@ class DashboardController extends Controller
                         'jig_unit' => ($jig ? $jig : '') . ($unitNo ? ' / ' . $unitNo : ''),
                         'side' => $side,
                         'quantity' => $qty,
+                        'supplier' => $pt->bomItem?->supplier?->name ?? $pt->bomItem?->supplier_name_raw ?? '—',
                         'process_type' => $pt->remarks ?: 'Surface Primer & Paint',
                         'status' => strtoupper(str_replace('_', ' ', $pt->status)),
                         'date' => $pt->created_at?->format('d-M-Y H:i') ?? '—',
@@ -726,11 +788,6 @@ class DashboardController extends Controller
 
             case 'assembly':
                 $title = 'Parts in Assembly Shop Queue';
-                $asmQuery = AssemblyRecord::query()
-                    ->with(['bomItem.project', 'bomItem.supplier'])
-                    ->whereIn('status', ['pending', 'in_progress', 'ready'])
-                    ->whereHas('bomItem', fn($q) => $q->whereIn('project_id', $activeProjectIds))
-                    ->orderByDesc('created_at');
                 $columns = [
                     ['label' => 'Part Number', 'key' => 'part_number'],
                     ['label' => 'Part No', 'key' => 'part_no'],
@@ -739,10 +796,93 @@ class DashboardController extends Controller
                     ['label' => 'JIG / Unit', 'key' => 'jig_unit'],
                     ['label' => 'Side', 'key' => 'side', 'align' => 'center'],
                     ['label' => 'Assembly Qty', 'key' => 'quantity', 'align' => 'center'],
+                    ['label' => 'Supplier', 'key' => 'supplier'],
+                    ['label' => 'Source Stage', 'key' => 'source'],
                     ['label' => 'Status', 'key' => 'status', 'align' => 'center'],
                     ['label' => 'Date', 'key' => 'date', 'align' => 'center'],
                 ];
-                foreach ($asmQuery->get() as $as) {
+
+                // 1. Completed Paint records waiting for assembly
+                $paintAsmQuery = PaintRecord::query()
+                    ->with(['bomItem.project', 'bomItem.supplier'])
+                    ->whereIn('status', ['completed', 'assembled'])
+                    ->whereRaw('(quantity - (SELECT COALESCE(SUM(quantity), 0) FROM assembly_records WHERE assembly_records.paint_record_id = paint_records.id)) > 0')
+                    ->whereHas('bomItem', fn($q) => $q->whereIn('project_id', $activeProjectIds))
+                    ->orderByDesc('created_at');
+
+                foreach ($paintAsmQuery->get() as $pt) {
+                    $alreadyAssembled = (int) AssemblyRecord::where('paint_record_id', $pt->id)->sum('quantity');
+                    $availQty = max(0, (int)$pt->quantity - $alreadyAssembled);
+                    if ($availQty > 0) {
+                        $jig = $pt->bomItem?->jig_no ?? '';
+                        $unitNo = $pt->bomItem?->unit_no ?? '';
+                        $partNo = $pt->bomItem?->standard_part_no ?? '';
+                        $side = $pt->side ?? 'COMMON';
+                        $partNumber = trim($jig) . trim($unitNo) . trim($partNo) . trim($side);
+
+                        $totalQuantity += $availQty;
+                        $items[] = [
+                            'id' => 'paint_' . $pt->id,
+                            'part_number' => $partNumber,
+                            'part_no' => $partNo ?: '—',
+                            'item_no' => $pt->bomItem?->item_no ?? '—',
+                            'project' => $pt->bomItem?->project?->project_code ?? ($pt->bomItem?->project?->name ?? '—'),
+                            'jig_unit' => ($jig ? $jig : '') . ($unitNo ? ' / ' . $unitNo : ''),
+                            'side' => $side,
+                            'quantity' => $availQty,
+                            'supplier' => $pt->bomItem?->supplier?->name ?? $pt->bomItem?->supplier_name_raw ?? '—',
+                            'source' => 'Paint Shop (Completed)',
+                            'status' => 'READY FOR ASSEMBLY',
+                            'date' => $pt->created_at?->format('d-M-Y H:i') ?? '—',
+                        ];
+                    }
+                }
+
+                // 2. Direct QC inspections (destination = ASSEMBLY) waiting for assembly
+                $qcDirectAsmQuery = QcInspection::query()
+                    ->with(['bomItem.project', 'bomItem.supplier'])
+                    ->where('approved_quantity', '>', 0)
+                    ->where('destination', 'ASSEMBLY')
+                    ->whereRaw('(approved_quantity - (SELECT COALESCE(SUM(quantity), 0) FROM assembly_records WHERE assembly_records.qc_inspection_id = qc_inspections.id)) > 0')
+                    ->whereHas('bomItem', fn($q) => $q->whereIn('project_id', $activeProjectIds))
+                    ->orderByDesc('created_at');
+
+                foreach ($qcDirectAsmQuery->get() as $qc) {
+                    $alreadyAssembled = (int) AssemblyRecord::where('qc_inspection_id', $qc->id)->sum('quantity');
+                    $availQty = max(0, (int)$qc->approved_quantity - $alreadyAssembled);
+                    if ($availQty > 0) {
+                        $jig = $qc->bomItem?->jig_no ?? '';
+                        $unitNo = $qc->bomItem?->unit_no ?? '';
+                        $partNo = $qc->bomItem?->standard_part_no ?? '';
+                        $side = $qc->side ?? 'COMMON';
+                        $partNumber = trim($jig) . trim($unitNo) . trim($partNo) . trim($side);
+
+                        $totalQuantity += $availQty;
+                        $items[] = [
+                            'id' => 'qc_' . $qc->id,
+                            'part_number' => $partNumber,
+                            'part_no' => $partNo ?: '—',
+                            'item_no' => $qc->bomItem?->item_no ?? '—',
+                            'project' => $qc->bomItem?->project?->project_code ?? ($qc->bomItem?->project?->name ?? '—'),
+                            'jig_unit' => ($jig ? $jig : '') . ($unitNo ? ' / ' . $unitNo : ''),
+                            'side' => $side,
+                            'quantity' => $availQty,
+                            'supplier' => $qc->bomItem?->supplier?->name ?? $qc->bomItem?->supplier_name_raw ?? '—',
+                            'source' => 'Direct from QC (Bypass Paint)',
+                            'status' => 'READY FOR ASSEMBLY',
+                            'date' => $qc->created_at?->format('d-M-Y H:i') ?? '—',
+                        ];
+                    }
+                }
+
+                // 3. Active Assembly records (pending / in_progress / ready)
+                $asmActiveQuery = AssemblyRecord::query()
+                    ->with(['bomItem.project', 'bomItem.supplier'])
+                    ->whereIn('status', ['pending', 'in_progress', 'ready'])
+                    ->whereHas('bomItem', fn($q) => $q->whereIn('project_id', $activeProjectIds))
+                    ->orderByDesc('created_at');
+
+                foreach ($asmActiveQuery->get() as $as) {
                     $qty = (int) ($as->quantity ?? 0);
                     $jig = $as->bomItem?->jig_no ?? '';
                     $unitNo = $as->bomItem?->unit_no ?? '';
@@ -752,7 +892,7 @@ class DashboardController extends Controller
 
                     $totalQuantity += $qty;
                     $items[] = [
-                        'id' => $as->id,
+                        'id' => 'asm_' . $as->id,
                         'part_number' => $partNumber,
                         'part_no' => $partNo ?: '—',
                         'item_no' => $as->bomItem?->item_no ?? '—',
@@ -760,6 +900,8 @@ class DashboardController extends Controller
                         'jig_unit' => ($jig ? $jig : '') . ($unitNo ? ' / ' . $unitNo : ''),
                         'side' => $side,
                         'quantity' => $qty,
+                        'supplier' => $as->bomItem?->supplier?->name ?? $as->bomItem?->supplier_name_raw ?? '—',
+                        'source' => 'Assembly Shop',
                         'status' => strtoupper(str_replace('_', ' ', $as->status)),
                         'date' => $as->created_at?->format('d-M-Y H:i') ?? '—',
                     ];

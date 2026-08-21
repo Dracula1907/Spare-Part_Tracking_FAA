@@ -180,7 +180,7 @@ class HierarchyService
                 $qcRew = (int) $qcForSide->sum('rework_quantity');
 
                 // Rework Stats
-                $rewComp = (int) $reworkForSide->where('status', 'completed')->sum('quantity');
+                $rewComp = (int) $reworkForSide->whereIn('status', ['completed', 'returned_to_qc'])->sum('quantity');
                 $rewActive = max(0, $qcRew - $rewComp);
 
                 // Paint Stats - Include all painted records (completed or assembled) so paint never re-acquires assembled parts
