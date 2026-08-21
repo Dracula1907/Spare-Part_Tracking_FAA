@@ -17,13 +17,19 @@ class HealthController extends Controller
         $status = 'healthy';
         $checks = [];
 
-        // 1. PostgreSQL Database Check
+        // 1. Database Check
         try {
-            DB::connection()->getPdo();
-            $dbVersion = DB::select('SHOW server_version')[0]->server_version ?? 'Unknown';
+            $pdo = DB::connection()->getPdo();
+            $driver = config('database.default');
+            $dbVersion = 'Unknown';
+            if ($driver === 'pgsql') {
+                $dbVersion = DB::select('SHOW server_version')[0]->server_version ?? 'Unknown';
+            } elseif ($driver === 'sqlite') {
+                $dbVersion = DB::select('SELECT sqlite_version() as ver')[0]->ver ?? 'SQLite';
+            }
             $checks['database'] = [
                 'status' => 'UP',
-                'driver' => config('database.default'),
+                'driver' => $driver,
                 'version' => $dbVersion,
             ];
         } catch (\Throwable $e) {
